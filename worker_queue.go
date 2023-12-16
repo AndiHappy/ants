@@ -15,6 +15,7 @@ var (
 
 type worker interface {
 	run()
+	setUid(uid string)
 	finish()
 	lastUsedTime() time.Time
 	inputFunc(func())

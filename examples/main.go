@@ -24,11 +24,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/panjf2000/ants/v2"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/panjf2000/ants/v2"
 )
 
 var sum int32
@@ -44,9 +43,8 @@ func demoFunc() {
 	fmt.Println("Hello World!")
 }
 
-func main() {
+func OriginMain() {
 	defer ants.Release()
-
 	runTimes := 1000
 
 	// Use the common pool.
@@ -111,4 +109,31 @@ func main() {
 	if sum != 499500*2 {
 		panic("the final result is wrong!!!")
 	}
+}
+
+/** example 1 **/
+var MsgHandlePool, _ = ants.NewPool(2)
+
+func example1() {
+	for i := 0; i < 10; i++ {
+		err := MsgHandlePool.Submit(func() {
+			time.Sleep(time.Second * 1)
+		})
+		ii := i / 2
+		time.Sleep(time.Duration(ii) * time.Second)
+
+		if err != nil {
+			fmt.Println(err)
+		}
+
+	}
+}
+
+func main() {
+	go func() {
+		fmt.Println("main other goroutine over!")
+	}()
+	fmt.Println("source code")
+	example1()
+	time.Sleep(time.Second * 10000)
 }

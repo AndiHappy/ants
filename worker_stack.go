@@ -26,6 +26,8 @@ func (wq *workerStack) insert(w worker) error {
 	return nil
 }
 
+// 如果有，则直接的返回
+// 如果没有，则返回 nil
 func (wq *workerStack) detach() worker {
 	l := wq.len()
 	if l == 0 {

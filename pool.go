@@ -24,10 +24,12 @@ package ants
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	syncx "github.com/panjf2000/ants/v2/internal/sync"
 )
 
@@ -40,6 +42,7 @@ type Pool struct {
 	capacity int32
 
 	// running is the number of the currently running goroutines.
+	// 正在执行的写成数量
 	running int32
 
 	// lock for protecting the worker queue.
@@ -221,7 +224,7 @@ func (p *Pool) Submit(task func()) error {
 
 	w, err := p.retrieveWorker()
 	if w != nil {
-		w.inputFunc(task)
+		w.inputFunc(task) //类似 w.task <- task
 	}
 	return err
 }
@@ -331,45 +334,62 @@ func (p *Pool) addWaiting(delta int) {
 
 // retrieveWorker returns an available worker to run the tasks.
 func (p *Pool) retrieveWorker() (w worker, err error) {
+	//首先是锁，初始化 pool 的时候，p.lock为syncx.NewSpinLock()
+	// 如果抢不到锁，就会阻塞，采用的是指数退避算法
 	p.lock.Lock()
-
 retry:
 	// First try to fetch the worker from the queue.
-	if w = p.workers.detach(); w != nil {
+	// 第一次 detach的时候，没有 worker，跳过了
+	w = p.workers.detach()
+	if w != nil {
+		fmt.Printf("worker直接detach: %s \n", w)
 		p.lock.Unlock()
 		return
 	}
 
-	// If the worker queue is empty, and we don't run out of the pool capacity,
-	// then just spawn a new worker goroutine.
+	// If the worker queue is empty, and we don't run out of the pool capacity, then just spawn a new worker goroutine.
+	// 如果协程池中，size 值大于正在执行的协程数量，直接生成一个 worker
 	if capacity := p.Cap(); capacity == -1 || capacity > p.Running() {
 		p.lock.Unlock()
 		w = p.workerCache.Get().(*goWorker)
-		w.run()
+		w.setUid(uuid.New().String())
+		fmt.Printf("新建了 worker:%s\n", w)
+		//只有在新建的时候，调用了 run 方法，上一个 if 就没有调用到 run 方法
+		w.run() // 运行worker，这里面就有对pool中 成员变量，类似运行的协程数的操作
 		return
 	}
 
 	// Bail out early if it's in nonblocking mode or the number of pending callers reaches the maximum limit value.
+	/**
+	1. p.options.Nonblocking ,默认为 false，也就是阻塞的， 如果是非阻塞的，则返回空，并且已经超载了
+	2. p.options.MaxBlockingTasks != 0 && p.Waiting() >= p.options.MaxBlockingTasks
+	如果超过了最大的等待阻塞的协程数，则返回空，并且返回超载
+	3. p.options.MaxBlockingTasks 默认为 0
+	*/
 	if p.options.Nonblocking || (p.options.MaxBlockingTasks != 0 && p.Waiting() >= p.options.MaxBlockingTasks) {
 		p.lock.Unlock()
 		return nil, ErrPoolOverload
 	}
 
+	//走到这里，增加一个等待的协程
 	// Otherwise, we'll have to keep them blocked and wait for at least one worker to be put back into pool.
 	p.addWaiting(1)
-	p.cond.Wait() // block and wait for an available worker
+	p.cond.Wait() // block and wait for an available worker，等待，直到有一个空闲的 worker 出现
 	p.addWaiting(-1)
 
+	//检查协程池的状态，处理异常情况
 	if p.IsClosed() {
 		p.lock.Unlock()
 		return nil, ErrPoolClosed
 	}
 
+	//无限的循环，再次的去找分配的 worker
 	goto retry
 }
 
 // revertWorker puts a worker back into free pool, recycling the goroutines.
 func (p *Pool) revertWorker(worker *goWorker) bool {
+	//
 	if capacity := p.Cap(); (capacity > 0 && p.Running() > capacity) || p.IsClosed() {
 		p.cond.Broadcast()
 		return false
@@ -384,13 +404,15 @@ func (p *Pool) revertWorker(worker *goWorker) bool {
 		p.lock.Unlock()
 		return false
 	}
-	if err := p.workers.insert(worker); err != nil {
+
+	err := p.workers.insert(worker)
+	if err != nil {
 		p.lock.Unlock()
 		return false
 	}
+	fmt.Printf("插入worker:%s 到workers \n", worker)
 	// Notify the invoker stuck in 'retrieveWorker()' of there is an available worker in the worker queue.
 	p.cond.Signal()
 	p.lock.Unlock()
-
 	return true
 }

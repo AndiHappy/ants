@@ -31,6 +31,7 @@ import (
 // it starts a goroutine that accepts tasks and
 // performs function calls.
 type goWorkerWithFunc struct {
+	uid string
 	// pool who owns this worker.
 	pool *PoolWithFunc
 
@@ -39,6 +40,18 @@ type goWorkerWithFunc struct {
 
 	// lastUsed will be updated when putting a worker back into queue.
 	lastUsed time.Time
+}
+
+func (w *goWorkerWithFunc) String() string {
+	return w.uid
+}
+
+func (w *goWorkerWithFunc) setUid(uid string) {
+	w.uid = uid
+}
+
+func (w *goWorkerWithFunc) getUid() string {
+	return w.uid
 }
 
 // run starts a goroutine to repeat the process
